@@ -22,11 +22,42 @@ impl Qualifier for WorkerHandlers {
     const ID: QualifierId = QualifierId::new("rustclamp.worker.handlers");
 }
 
-/// Typed future returned by a message handler.
-pub type HandlerFuture = Pin<Box<dyn Future<Output = Result<(), HandlerError>> + Send + 'static>>;
-
 /// Application or infrastructure error returned from one handler attempt.
 pub type HandlerError = Box<dyn Error + Send + Sync>;
+
+/// Handler failure classification used to decide whether another attempt is safe.
+#[derive(Debug)]
+pub enum HandlerFailure {
+    /// The operation failed before producing an external side effect.
+    Retryable(HandlerError),
+    /// The input or operation is permanently invalid.
+    Permanent(HandlerError),
+    /// A remote side effect may have completed, but its result is unknown.
+    UnknownOutcome(HandlerError),
+}
+
+impl fmt::Display for HandlerFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Retryable(error) => write!(f, "retryable handler failure: {error}"),
+            Self::Permanent(error) => write!(f, "permanent handler failure: {error}"),
+            Self::UnknownOutcome(error) => write!(f, "handler outcome is unknown: {error}"),
+        }
+    }
+}
+
+impl Error for HandlerFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Retryable(error) | Self::Permanent(error) | Self::UnknownOutcome(error) => {
+                Some(error.as_ref())
+            }
+        }
+    }
+}
+
+/// Typed future returned by a message handler.
+pub type HandlerFuture = Pin<Box<dyn Future<Output = Result<(), HandlerFailure>> + Send + 'static>>;
 
 type Handler = Arc<dyn Fn(MessageEnvelope) -> HandlerFuture + Send + Sync + 'static>;
 
@@ -42,7 +73,7 @@ impl HandlerDeclaration {
     pub fn new<F, Fut>(name: impl Into<String>, schema_version: u32, handler: F) -> Self
     where
         F: Fn(MessageEnvelope) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), HandlerError>> + Send + 'static,
+        Fut: Future<Output = Result<(), HandlerFailure>> + Send + 'static,
     {
         Self {
             name: name.into(),
@@ -206,7 +237,7 @@ pub enum DispatchError {
         schema_version: u32,
     },
     /// The selected application handler failed.
-    Handler(HandlerError),
+    Handler(HandlerFailure),
 }
 
 impl fmt::Display for DispatchError {
@@ -228,7 +259,7 @@ impl Error for DispatchError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Decode(error) => Some(error),
-            Self::Handler(error) => Some(error.as_ref()),
+            Self::Handler(error) => Some(error),
             Self::NoHandler { .. } => None,
         }
     }
