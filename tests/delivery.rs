@@ -1,8 +1,8 @@
 //! Tests for typed handlers, payload validation and outcome classification.
 
-use std::cell::Cell;
 use std::future::Future;
 use std::pin::pin;
+use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -33,11 +33,12 @@ struct Flaky {
     permanent: bool,
 }
 
-struct FixedClock(Cell<SystemTime>);
+// A Mutex, not a Cell: core's Clock is Send + Sync (core#5).
+struct FixedClock(Mutex<SystemTime>);
 
 impl Clock for FixedClock {
     fn now(&self) -> SystemTime {
-        self.0.get()
+        *self.0.lock().unwrap()
     }
 }
 
@@ -105,7 +106,7 @@ fn delivery(name: &str, payload: Value, attempt: u32) -> Delivery {
 }
 
 fn clock() -> FixedClock {
-    FixedClock(Cell::new(UNIX_EPOCH + Duration::from_secs(1_000)))
+    FixedClock(Mutex::new(UNIX_EPOCH + Duration::from_secs(1_000)))
 }
 
 fn deliver(delivery: Delivery, policy: &RetryPolicy) -> Outcome {
