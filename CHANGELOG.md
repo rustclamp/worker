@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add feature `sqlite` (implies `service`): `sqlite::SqliteQueue`, a durable
+  `BlockingTransport` over one `rusqlite` connection (claim what is due on an
+  injected `Clock`, dedupe key, attempts, `recover`), and `sqlite::enqueue`, a
+  transactional outbox that joins the caller's transaction (ADR 0026, #3).
 - Breaking: `Outcome::Retry` is now `Retry { delay, error }` and
   `ServiceEvent::Retrying` carries the failure as `error`, so apps can log the
   real `last_error`; `Settlement::Done` and `Settlement::DeadLetter` carry the
