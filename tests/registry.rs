@@ -7,7 +7,7 @@ const MAIL: ModuleId = ModuleId::new("test.module.mail");
 const ORDERS: ModuleId = ModuleId::new("test.module.orders");
 
 fn declaration(name: &str, version: u32) -> HandlerDeclaration {
-    HandlerDeclaration::new(name, version, |_| async { Ok(()) })
+    HandlerDeclaration::new(name, version, |_| async { Ok(serde_json::Value::Null) })
 }
 
 #[test]
