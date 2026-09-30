@@ -45,6 +45,12 @@ pub trait Transport {
         receipt: Self::Receipt,
         settlement: Settlement,
     ) -> impl Future<Output = io::Result<()>>;
+
+    /// Runs once before the first claim: return messages a crashed run left
+    /// claimed, so they are delivered again. Does nothing by default.
+    fn recover(&mut self) -> impl Future<Output = io::Result<()>> {
+        async { Ok(()) }
+    }
 }
 
 /// One claimed message, or one the transport could not decode.
@@ -253,11 +259,13 @@ impl<T: Transport> WorkerService<T> {
         Arc::clone(&self.stats)
     }
 
-    /// Claims and runs messages until `shutdown` completes, then releases
-    /// waiting messages and drains running ones.
+    /// Runs [`Transport::recover`], then claims and runs messages until
+    /// `shutdown` completes, then releases waiting messages and drains running
+    /// ones. A failed recovery stops the service before anything is claimed.
     ///
     /// Must run inside a Tokio runtime; handler attempts are spawned onto it.
     pub async fn run(mut self, shutdown: impl Future<Output = ()>) -> io::Result<ServiceReport> {
+        self.transport.recover().await?;
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut state = State {
             next_slot: 0,

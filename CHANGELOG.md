@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `Transport::recover`: runs once before the first claim, to return
+  messages a crashed run left claimed; does nothing by default (#4).
 - Add feature `service`: `service::WorkerService` runs a `HandlerRegistry` over a
   `Transport` (claim/settle) with backpressure, bounded concurrency, in-process
   retries, dead-lettering (new `DeadReason::Malformed`), an optional handler
