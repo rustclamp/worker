@@ -156,6 +156,20 @@ impl HandlerRegistry {
         handler(message).await.map_err(DispatchError::Handler)
     }
 
+    /// Reports whether a handler is registered for this exact name and schema version.
+    pub fn contains(&self, name: &str, schema_version: u32) -> bool {
+        self.handlers
+            .keys()
+            .any(|(route, version)| route == name && *version == schema_version)
+    }
+
+    /// Returns every registered route as `(name, schema_version)`, sorted.
+    pub fn routes(&self) -> impl Iterator<Item = (&str, u32)> {
+        self.handlers
+            .keys()
+            .map(|(name, version)| (name.as_str(), *version))
+    }
+
     /// Returns the number of compiled message handlers.
     pub fn len(&self) -> usize {
         self.handlers.len()
