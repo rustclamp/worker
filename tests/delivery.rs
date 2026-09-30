@@ -143,7 +143,7 @@ fn outcomes_follow_the_retry_policy() {
 
     assert!(matches!(
         deliver(delivery("flaky", retryable.clone(), 2), &policy),
-        Outcome::Retry(delay) if delay == Duration::from_millis(200)
+        Outcome::Retry { delay, .. } if delay == Duration::from_millis(200)
     ));
     assert!(matches!(
         deliver(delivery("flaky", retryable, 3), &policy),
@@ -192,7 +192,7 @@ fn a_stepped_backoff_table_is_a_policy() {
     let retryable = json!({"fail_times": 9, "permanent": false});
     assert!(matches!(
         deliver(delivery("flaky", retryable, 4), &policy),
-        Outcome::Retry(delay) if delay == Duration::from_secs(30)
+        Outcome::Retry { delay, .. } if delay == Duration::from_secs(30)
     ));
 }
 
