@@ -43,6 +43,23 @@ pub enum HandlerFailure {
     UnknownOutcome(HandlerError),
 }
 
+impl HandlerFailure {
+    /// A [`HandlerFailure::Retryable`] from anything convertible to an error, such as a code or message.
+    pub fn retryable(error: impl Into<HandlerError>) -> Self {
+        Self::Retryable(error.into())
+    }
+
+    /// A [`HandlerFailure::Permanent`] from anything convertible to an error, such as a code or message.
+    pub fn permanent(error: impl Into<HandlerError>) -> Self {
+        Self::Permanent(error.into())
+    }
+
+    /// A [`HandlerFailure::UnknownOutcome`] from anything convertible to an error, such as a code or message.
+    pub fn unknown_outcome(error: impl Into<HandlerError>) -> Self {
+        Self::UnknownOutcome(error.into())
+    }
+}
+
 impl fmt::Display for HandlerFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -429,7 +446,10 @@ impl RetryPolicy {
     pub fn classify(&self, error: DispatchError, attempt: u32) -> Outcome {
         let reason = match &error {
             DispatchError::Handler(HandlerFailure::Retryable(_)) if attempt < self.max_attempts => {
-                return Outcome::Retry((self.backoff)(attempt));
+                return Outcome::Retry {
+                    delay: (self.backoff)(attempt),
+                    error,
+                };
             }
             DispatchError::Handler(HandlerFailure::Retryable(_)) => DeadReason::RetryExhausted,
             DispatchError::Handler(HandlerFailure::Permanent(_)) => DeadReason::Permanent,
@@ -459,8 +479,13 @@ impl fmt::Debug for RetryPolicy {
 pub enum Outcome {
     /// Acknowledge; the handler's result value.
     Done(Value),
-    /// Redeliver after this delay.
-    Retry(Duration),
+    /// Redeliver after `delay`.
+    Retry {
+        /// Backoff before the next attempt.
+        delay: Duration,
+        /// The retryable failure that caused it.
+        error: DispatchError,
+    },
     /// Stop delivering; move to the transport's dead-letter store.
     DeadLetter {
         /// Why no further attempt is made.

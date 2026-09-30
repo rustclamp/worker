@@ -11,8 +11,8 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
 use std::pin::pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use rustclamp_core::{Clock, SystemClock};
@@ -20,9 +20,10 @@ use rustclamp_messaging::MessageEnvelope;
 use rustclamp_runtime::CancellationToken;
 use serde_json::Value;
 use tokio::sync::mpsc;
+use tokio::task::spawn_blocking;
 use tokio::time::{Instant, MissedTickBehavior, interval, sleep, sleep_until, timeout};
 
-use crate::{DeadReason, Delivery, HandlerRegistry, Outcome, RetryPolicy};
+use crate::{DeadReason, Delivery, DispatchError, HandlerRegistry, Outcome, RetryPolicy};
 
 /// Where messages come from and how their final state is recorded.
 ///
@@ -50,6 +51,63 @@ pub trait Transport {
     /// claimed, so they are delivered again. Does nothing by default.
     fn recover(&mut self) -> impl Future<Output = io::Result<()>> {
         async { Ok(()) }
+    }
+}
+
+/// A [`Transport`] whose I/O blocks (SQLite, files). Wrap it in [`Blocking`] to
+/// run each call on Tokio's blocking pool instead of the service task.
+pub trait BlockingTransport: Send + 'static {
+    /// See [`Transport::Receipt`]; must cross to the blocking pool.
+    type Receipt: Send + 'static;
+
+    /// See [`Transport::claim`].
+    fn claim(&mut self, limit: usize) -> io::Result<Vec<Claim<Self::Receipt>>>;
+
+    /// See [`Transport::settle`].
+    fn settle(&mut self, receipt: Self::Receipt, settlement: Settlement) -> io::Result<()>;
+
+    /// See [`Transport::recover`]. Does nothing by default.
+    fn recover(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Adapts a [`BlockingTransport`] to [`Transport`] via `spawn_blocking`.
+pub struct Blocking<T>(Arc<Mutex<T>>);
+
+impl<T> Blocking<T> {
+    /// Wraps `transport`.
+    pub fn new(transport: T) -> Self {
+        Self(Arc::new(Mutex::new(transport)))
+    }
+}
+
+impl<T: BlockingTransport> Blocking<T> {
+    async fn run<R: Send + 'static>(
+        &self,
+        call: impl FnOnce(&mut T) -> io::Result<R> + Send + 'static,
+    ) -> io::Result<R> {
+        let inner = Arc::clone(&self.0);
+        spawn_blocking(move || call(&mut inner.lock().unwrap_or_else(PoisonError::into_inner)))
+            .await
+            .map_err(io::Error::other)?
+    }
+}
+
+impl<T: BlockingTransport> Transport for Blocking<T> {
+    type Receipt = T::Receipt;
+
+    async fn claim(&mut self, limit: usize) -> io::Result<Vec<Claim<T::Receipt>>> {
+        self.run(move |transport| transport.claim(limit)).await
+    }
+
+    async fn settle(&mut self, receipt: T::Receipt, settlement: Settlement) -> io::Result<()> {
+        self.run(move |transport| transport.settle(receipt, settlement))
+            .await
+    }
+
+    async fn recover(&mut self) -> io::Result<()> {
+        self.run(T::recover).await
     }
 }
 
@@ -84,6 +142,8 @@ pub enum Settlement {
         result: Value,
         /// Attempts used, including the successful one.
         attempts: u32,
+        /// The message that completed.
+        message: MessageEnvelope,
     },
     /// Never deliver again; store it for inspection.
     DeadLetter {
@@ -93,6 +153,8 @@ pub enum Settlement {
         attempts: u32,
         /// The failure, when there was one.
         error: Option<String>,
+        /// The message; `None` for a malformed item that never decoded.
+        message: Option<MessageEnvelope>,
     },
     /// Make it available again with its attempt uncounted (shutdown).
     Release,
@@ -135,6 +197,8 @@ pub enum ServiceEvent<'a> {
         attempt: u32,
         /// Backoff before the next attempt.
         delay: Duration,
+        /// Why the attempt failed.
+        error: &'a DispatchError,
     },
     /// The message completed.
     Done {
@@ -325,7 +389,7 @@ impl<T: Transport> WorkerService<T> {
         for claim in self.transport.claim(room).await? {
             match claim {
                 Claim::Malformed { receipt, id, error } => {
-                    self.dead_letter(receipt, &id, DeadReason::Malformed, 0, Some(error))
+                    self.dead_letter(receipt, &id, DeadReason::Malformed, 0, Some(error), None)
                         .await?;
                 }
                 Claim::Message { receipt, message }
@@ -337,8 +401,16 @@ impl<T: Transport> WorkerService<T> {
                         "no handler for {:?} schema version {}",
                         message.name, message.schema_version
                     );
-                    self.dead_letter(receipt, &message.id, DeadReason::NoHandler, 0, Some(error))
-                        .await?;
+                    let id = message.id.clone();
+                    self.dead_letter(
+                        receipt,
+                        &id,
+                        DeadReason::NoHandler,
+                        0,
+                        Some(error),
+                        Some(message),
+                    )
+                    .await?;
                 }
                 Claim::Message { receipt, message } => {
                     self.stats.claimed.fetch_add(1, Relaxed);
@@ -429,12 +501,13 @@ impl<T: Transport> WorkerService<T> {
             return self.release(state, slot).await;
         };
         match outcome {
-            Outcome::Retry(delay) => {
+            Outcome::Retry { delay, error } => {
                 let job = state.jobs.get_mut(&slot).expect("running job is tracked");
                 (self.observer)(&ServiceEvent::Retrying {
                     id: &job.message.id,
                     attempt: job.attempt,
                     delay,
+                    error: &error,
                 });
                 job.attempt += 1;
                 if state.stopping {
@@ -449,28 +522,35 @@ impl<T: Transport> WorkerService<T> {
             }
             Outcome::Done(result) => {
                 let job = state.jobs.remove(&slot).expect("running job is tracked");
+                let (attempts, id) = (job.attempt, job.message.id.clone());
                 self.transport
                     .settle(
                         job.receipt,
                         Settlement::Done {
                             result,
-                            attempts: job.attempt,
+                            attempts,
+                            message: job.message,
                         },
                     )
                     .await?;
                 self.stats.claimed.fetch_sub(1, Relaxed);
                 self.stats.done.fetch_add(1, Relaxed);
-                (self.observer)(&ServiceEvent::Done {
-                    id: &job.message.id,
-                    attempts: job.attempt,
-                });
+                (self.observer)(&ServiceEvent::Done { id: &id, attempts });
             }
             Outcome::DeadLetter { reason, error } => {
                 let job = state.jobs.remove(&slot).expect("running job is tracked");
                 self.stats.claimed.fetch_sub(1, Relaxed);
                 let error = error.map(|error| error.to_string());
-                self.dead_letter(job.receipt, &job.message.id, reason, job.attempt, error)
-                    .await?;
+                let id = job.message.id.clone();
+                self.dead_letter(
+                    job.receipt,
+                    &id,
+                    reason,
+                    job.attempt,
+                    error,
+                    Some(job.message),
+                )
+                .await?;
             }
         }
         Ok(())
@@ -493,6 +573,7 @@ impl<T: Transport> WorkerService<T> {
         reason: DeadReason,
         attempts: u32,
         error: Option<String>,
+        message: Option<MessageEnvelope>,
     ) -> io::Result<()> {
         self.transport
             .settle(
@@ -501,6 +582,7 @@ impl<T: Transport> WorkerService<T> {
                     reason,
                     attempts,
                     error,
+                    message,
                 },
             )
             .await?;

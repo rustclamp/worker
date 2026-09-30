@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Breaking: `Outcome::Retry` is now `Retry { delay, error }` and
+  `ServiceEvent::Retrying` carries the failure as `error`, so apps can log the
+  real `last_error`; `Settlement::Done` and `Settlement::DeadLetter` carry the
+  `message` (`None` for a malformed item), so receipts need not keep the raw
+  payload (#4).
+- Add `HandlerFailure::retryable` / `permanent` / `unknown_outcome`, taking
+  anything convertible to a boxed error (`"code"`, `String`) (#4).
+- Add `service::BlockingTransport` and `service::Blocking`, which run a
+  blocking transport's calls on Tokio's blocking pool (#4).
+
 - Add `Transport::recover`: runs once before the first claim, to return
   messages a crashed run left claimed; does nothing by default (#4).
 - Add feature `service`: `service::WorkerService` runs a `HandlerRegistry` over a

@@ -12,7 +12,8 @@ use std::time::Duration;
 use rustclamp_core::{ContributionTarget, ModuleId};
 use rustclamp_messaging::MessageEnvelope;
 use rustclamp_worker::service::{
-    Claim, ServiceConfig, ServiceEvent, ServiceReport, Settlement, Transport, WorkerService,
+    Blocking, BlockingTransport, Claim, ServiceConfig, ServiceEvent, ServiceReport, Settlement,
+    Transport, WorkerService,
 };
 use rustclamp_worker::{
     Delivery, HandlerDeclaration, HandlerFailure, HandlerRegistry, HandlerTarget, RetryPolicy,
@@ -64,10 +65,20 @@ impl Transport for Memory {
     async fn settle(&mut self, receipt: usize, settlement: Settlement) -> io::Result<()> {
         self.unsettled -= 1;
         let label = match settlement {
-            Settlement::Done { result, attempts } => format!("done {attempts} {result}"),
+            Settlement::Done {
+                result,
+                attempts,
+                message,
+            } => format!("done {attempts} {result} {}", message.id),
             Settlement::DeadLetter {
-                reason, attempts, ..
-            } => format!("dead {attempts} {reason:?}"),
+                reason,
+                attempts,
+                message,
+                ..
+            } => format!(
+                "dead {attempts} {reason:?} {}",
+                message.map_or("-".into(), |message| message.id)
+            ),
             Settlement::Release => "release".into(),
         };
         self.settled.borrow_mut().push((receipt, label));
@@ -124,9 +135,9 @@ fn registry(running: Arc<AtomicUsize>, peak: Arc<AtomicUsize>) -> HandlerRegistr
                             return Ok(delivery.attempt);
                         }
                         Err(if flaky.permanent {
-                            HandlerFailure::Permanent("no".into())
+                            HandlerFailure::permanent("no")
                         } else {
-                            HandlerFailure::Retryable("again".into())
+                            HandlerFailure::retryable("again")
                         })
                     },
                 ),
@@ -175,7 +186,9 @@ fn run(items: Vec<Item>, config: ServiceConfig, stop_after: Duration) -> Run {
     let service = WorkerService::new(registry, transport, config).on_event(move |event| {
         log.borrow_mut().push(match event {
             ServiceEvent::Started { id, attempt } => format!("start {id} {attempt}"),
-            ServiceEvent::Retrying { id, attempt, .. } => format!("retry {id} {attempt}"),
+            ServiceEvent::Retrying {
+                id, attempt, error, ..
+            } => format!("retry {id} {attempt} {error}"),
             ServiceEvent::Done { id, attempts } => format!("done {id} {attempts}"),
             ServiceEvent::DeadLettered {
                 id,
@@ -222,12 +235,12 @@ fn outcomes_are_settled_and_reported_in_order() {
             .1
             .clone()
     };
-    assert_eq!(settled(0), "done 3 3");
-    assert_eq!(settled(1), "dead 1 Permanent");
-    assert_eq!(settled(2), "dead 0 NoHandler");
-    assert_eq!(settled(3), "dead 0 Malformed");
-    assert_eq!(settled(4), "dead 3 RetryExhausted");
-    assert_eq!(settled(5), "dead 1 InvalidPayload");
+    assert_eq!(settled(0), "done 3 3 a");
+    assert_eq!(settled(1), "dead 1 Permanent b");
+    assert_eq!(settled(2), "dead 0 NoHandler c");
+    assert_eq!(settled(3), "dead 0 Malformed -");
+    assert_eq!(settled(4), "dead 3 RetryExhausted e");
+    assert_eq!(settled(5), "dead 1 InvalidPayload f");
 
     let events = |id: &str| {
         run.events
@@ -240,9 +253,9 @@ fn outcomes_are_settled_and_reported_in_order() {
         events("a"),
         [
             "start a 1",
-            "retry a 1",
+            "retry a 1 message handler failed: retryable handler failure: again",
             "start a 2",
-            "retry a 2",
+            "retry a 2 message handler failed: retryable handler failure: again",
             "start a 3",
             "done a 3"
         ]
@@ -332,7 +345,7 @@ fn an_attempt_over_the_handler_timeout_has_an_unknown_outcome() {
         },
         Duration::from_millis(200),
     );
-    assert_eq!(run.settled, [(0, "dead 1 UnknownOutcome".to_owned())]);
+    assert_eq!(run.settled, [(0, "dead 1 UnknownOutcome slow".to_owned())]);
 }
 
 /// Logs its calls; claims nothing.
@@ -397,4 +410,64 @@ fn a_failed_recovery_stops_before_claiming() {
     let (report, calls) = run_recovering(true);
     assert_eq!(report.unwrap_err().to_string(), "spool unreadable");
     assert_eq!(calls, ["recover"]);
+}
+
+/// Blocks its thread in every call, as SQLite or file I/O would.
+struct Sync {
+    pending: Vec<MessageEnvelope>,
+    settled: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl BlockingTransport for Sync {
+    type Receipt = String;
+
+    fn claim(&mut self, limit: usize) -> io::Result<Vec<Claim<String>>> {
+        std::thread::sleep(Duration::from_millis(1));
+        let take = limit.min(self.pending.len());
+        Ok(self
+            .pending
+            .drain(..take)
+            .map(|message| Claim::Message {
+                receipt: message.id.clone(),
+                message,
+            })
+            .collect())
+    }
+
+    fn settle(&mut self, receipt: String, settlement: Settlement) -> io::Result<()> {
+        let label = match settlement {
+            Settlement::Done { message, .. } => format!("done {receipt} {}", message.name),
+            other => format!("{other:?}"),
+        };
+        self.settled.lock().unwrap().push(label);
+        Ok(())
+    }
+}
+
+#[test]
+fn a_blocking_transport_runs_off_the_service_task() {
+    let Item::Message(envelope) =
+        message("a", "flaky", json!({"fail_times": 0, "permanent": false}))
+    else {
+        unreachable!()
+    };
+    let settled = Arc::<std::sync::Mutex<Vec<String>>>::default();
+    let transport = Blocking::new(Sync {
+        pending: vec![envelope],
+        settled: settled.clone(),
+    });
+    let registry = registry(Arc::default(), Arc::default());
+    let service = WorkerService::new(registry, transport, config());
+    let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    tokio
+        .block_on(async move {
+            service
+                .run(tokio::time::sleep(Duration::from_millis(100)))
+                .await
+        })
+        .unwrap();
+    assert_eq!(*settled.lock().unwrap(), ["done a flaky"]);
 }
