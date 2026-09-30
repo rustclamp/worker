@@ -21,6 +21,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 #[cfg(feature = "service")]
 pub mod service;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 
 /// Qualifier for one worker handler target.
 pub struct WorkerHandlers;
