@@ -334,3 +334,67 @@ fn an_attempt_over_the_handler_timeout_has_an_unknown_outcome() {
     );
     assert_eq!(run.settled, [(0, "dead 1 UnknownOutcome".to_owned())]);
 }
+
+/// Logs its calls; claims nothing.
+struct Recovering {
+    calls: Rc<RefCell<Vec<&'static str>>>,
+    fail: bool,
+}
+
+impl Transport for Recovering {
+    type Receipt = usize;
+
+    async fn claim(&mut self, _limit: usize) -> io::Result<Vec<Claim<usize>>> {
+        self.calls.borrow_mut().push("claim");
+        Ok(Vec::new())
+    }
+
+    async fn settle(&mut self, _receipt: usize, _settlement: Settlement) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn recover(&mut self) -> io::Result<()> {
+        self.calls.borrow_mut().push("recover");
+        if self.fail {
+            Err(io::Error::other("spool unreadable"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn run_recovering(fail: bool) -> (io::Result<ServiceReport>, Vec<&'static str>) {
+    let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let transport = Recovering {
+        calls: calls.clone(),
+        fail,
+    };
+    let registry = registry(Arc::default(), Arc::default());
+    let service = WorkerService::new(registry, transport, config());
+    let report = tokio.block_on(async move {
+        service
+            .run(tokio::time::sleep(Duration::from_millis(20)))
+            .await
+    });
+    (report, calls.take())
+}
+
+#[test]
+fn recover_runs_once_before_the_first_claim() {
+    let (report, calls) = run_recovering(false);
+    assert!(report.is_ok());
+    assert_eq!(calls.first(), Some(&"recover"));
+    assert_eq!(calls.iter().filter(|call| **call == "recover").count(), 1);
+    assert!(calls.contains(&"claim"));
+}
+
+#[test]
+fn a_failed_recovery_stops_before_claiming() {
+    let (report, calls) = run_recovering(true);
+    assert_eq!(report.unwrap_err().to_string(), "spool unreadable");
+    assert_eq!(calls, ["recover"]);
+}
