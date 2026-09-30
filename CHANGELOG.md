@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add feature `service`: `service::WorkerService` runs a `HandlerRegistry` over a
+  `Transport` (claim/settle) with backpressure, bounded concurrency, in-process
+  retries, dead-lettering (new `DeadReason::Malformed`), an optional handler
+  timeout, and a drain that cancels running attempts at its deadline;
+  `ServiceEvent` callbacks and live `ServiceStats` (ADR 0020).
+- `HandlerRegistry::deliver` reads the clock eagerly and returns a `Send` future.
 - Breaking: handlers take a `Delivery { message, attempt }` and return
   `Result<serde_json::Value, HandlerFailure>`; `dispatch` returns the value and
   `dispatch_json` takes the attempt (ADR 0018 proposal A).

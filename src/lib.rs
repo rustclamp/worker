@@ -19,6 +19,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
+#[cfg(feature = "service")]
+pub mod service;
+
 /// Qualifier for one worker handler target.
 pub struct WorkerHandlers;
 
@@ -231,27 +234,31 @@ impl HandlerRegistry {
     /// A message past its `deadline_unix_ms` on `clock` is dead-lettered as
     /// [`DeadReason::Expired`] without running. Handler timeouts are the caller's:
     /// wrap this future in a timer and treat expiry as [`DeadReason::UnknownOutcome`].
-    pub async fn deliver(
-        &self,
+    pub fn deliver<'a>(
+        &'a self,
         delivery: Delivery,
-        policy: &RetryPolicy,
+        policy: &'a RetryPolicy,
         clock: &dyn Clock,
-    ) -> Outcome {
-        if let Some(deadline) = delivery.message.deadline_unix_ms {
+    ) -> impl Future<Output = Outcome> + Send + 'a {
+        // Read the clock now, so the returned future stays `Send` for any `Clock`.
+        let expired = delivery.message.deadline_unix_ms.is_some_and(|deadline| {
             let now = clock.now().duration_since(UNIX_EPOCH).map_or(0, |since| {
                 u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
             });
-            if now >= deadline {
+            now >= deadline
+        });
+        async move {
+            if expired {
                 return Outcome::DeadLetter {
                     reason: DeadReason::Expired,
                     error: None,
                 };
             }
-        }
-        let attempt = delivery.attempt;
-        match self.dispatch(delivery).await {
-            Ok(value) => Outcome::Done(value),
-            Err(error) => policy.classify(error, attempt),
+            let attempt = delivery.attempt;
+            match self.dispatch(delivery).await {
+                Ok(value) => Outcome::Done(value),
+                Err(error) => policy.classify(error, attempt),
+            }
         }
     }
 
@@ -478,4 +485,6 @@ pub enum DeadReason {
     UnknownOutcome,
     /// The message's deadline passed before it ran.
     Expired,
+    /// The transport could not decode the claimed item into a message.
+    Malformed,
 }
