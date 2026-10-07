@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `mqtt::MqttTransport` reports a broker outage: a stderr warning on the
+  first connection error, again every minute while it lasts, and once on
+  reconnect; `MqttTransport::outage()` returns how long it has lasted, for
+  health checks. `claim` still returns no error (#12).
 - Add feature `mqtt` (implies `service`): `mqtt::MqttTransport`, a `Transport`
   over one `rumqttc` QoS 1 subscription with manual acks and a persistent
   session (`Done` acks, `DeadLetter` republishes to a dead-letter topic then

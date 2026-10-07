@@ -21,6 +21,8 @@
 //! acks here if such a broker matters.
 
 use std::io;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use rumqttc::{AsyncClient, ClientError, Event, EventLoop, MqttOptions, Packet, Publish, QoS};
 use rustclamp_messaging::MessageEnvelope;
@@ -39,6 +41,7 @@ pub struct MqttTransport {
     received: UnboundedReceiver<Publish>,
     driver: JoinHandle<()>,
     dead_topic: String,
+    down_since: Arc<Mutex<Option<Instant>>>,
 }
 
 impl MqttTransport {
@@ -56,18 +59,31 @@ impl MqttTransport {
         let (client, events) = AsyncClient::new(options, 64);
         client.subscribe(filter, QoS::AtLeastOnce).await?;
         let (sender, received) = unbounded_channel();
-        let driver = tokio::spawn(drive(events, sender));
+        let down_since = Arc::default();
+        let driver = tokio::spawn(drive(events, sender, Arc::clone(&down_since)));
         Ok(Self {
             client,
             received,
             driver,
             dead_topic: dead_topic.into(),
+            down_since,
         })
     }
 
     /// The connection's client, e.g. to [`publish`] on it.
     pub fn client(&self) -> &AsyncClient {
         &self.client
+    }
+
+    /// How long the broker has been unreachable, or `None` while connected
+    /// (and before the first attempt fails). For health checks: while it is
+    /// down, [`claim`](Transport::claim) just returns nothing.
+    pub fn outage(&self) -> Option<Duration> {
+        let down_since = *self
+            .down_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        down_since.map(|since| since.elapsed())
     }
 }
 
@@ -77,10 +93,21 @@ impl Drop for MqttTransport {
     }
 }
 
-// ponytail: connection errors are retried every second and never surfaced, so a
-// broker that stays down looks like an empty queue; report them through an
-// event if operators need it.
-async fn drive(mut events: EventLoop, sender: UnboundedSender<Publish>) {
+/// How often a continuing outage is reported again.
+const OUTAGE_REPORT: Duration = Duration::from_secs(60);
+
+// Connection errors are retried every second, never returned from `claim`: the
+// service stops on a claim error without draining. The outage goes to stderr
+// (first error, every OUTAGE_REPORT, reconnect) and to `MqttTransport::outage`.
+// ponytail: stderr, not the app's log channel; take a reporter callback if an
+// app needs the warnings in its own log.
+async fn drive(
+    mut events: EventLoop,
+    sender: UnboundedSender<Publish>,
+    down_since: Arc<Mutex<Option<Instant>>>,
+) {
+    let mut reported = Instant::now();
+    let down = || down_since.lock().unwrap_or_else(PoisonError::into_inner);
     loop {
         match events.poll().await {
             Ok(Event::Incoming(Packet::Publish(publish))) => {
@@ -88,8 +115,27 @@ async fn drive(mut events: EventLoop, sender: UnboundedSender<Publish>) {
                     return;
                 }
             }
+            Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                if let Some(since) = down().take() {
+                    eprintln!("mqtt: reconnected after {}s", since.elapsed().as_secs());
+                }
+            }
             Ok(_) => {}
-            Err(_) => sleep(Duration::from_secs(1)).await,
+            Err(error) => {
+                let (first, since) = {
+                    let mut down = down();
+                    (down.is_none(), *down.get_or_insert_with(Instant::now))
+                };
+                if first {
+                    reported = Instant::now();
+                    eprintln!("mqtt: broker unreachable, retrying every second: {error}");
+                } else if reported.elapsed() >= OUTAGE_REPORT {
+                    reported = Instant::now();
+                    let secs = since.elapsed().as_secs();
+                    eprintln!("mqtt: broker still unreachable after {secs}s: {error}");
+                }
+                sleep(Duration::from_secs(1)).await;
+            }
         }
     }
 }

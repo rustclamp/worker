@@ -63,6 +63,7 @@ async fn a_real_broker() {
             .unwrap();
     // Subscriptions complete in the background; publishes before SUBACK are dropped.
     sleep(Duration::from_secs(1)).await;
+    assert_eq!(transport.outage(), None);
 
     publish(transport.client(), &jobs, &message("done"))
         .await
@@ -114,4 +115,21 @@ async fn a_real_broker() {
     let mut transport = connect().await.unwrap();
     let claims = claim(&mut transport, 2).await;
     assert_eq!(ids(&claims), ["unsettled"]);
+}
+
+#[tokio::test]
+async fn an_unreachable_broker_is_an_outage_not_a_claim_error() {
+    // Port 1 refuses connections; no broker needed.
+    let options = MqttOptions::new("rc-test-down", "127.0.0.1", 1);
+    let mut transport = MqttTransport::connect(options, "jobs", "dead")
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if transport.outage().is_some() {
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert!(transport.outage().is_some());
+    assert!(transport.claim(10).await.unwrap().is_empty());
 }
