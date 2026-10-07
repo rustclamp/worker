@@ -19,6 +19,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
 #[cfg(feature = "service")]
 pub mod service;
 #[cfg(feature = "sqlite")]

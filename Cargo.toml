@@ -15,6 +15,8 @@ default = []
 service = ["dep:tokio", "dep:rustclamp-runtime"]
 # SqliteQueue: a durable Transport and transactional outbox over rusqlite (ADR 0026).
 sqlite = ["service", "dep:rusqlite"]
+# MqttTransport: a QoS 1 Transport and publish helper over rumqttc, no TLS (ADR 0028).
+mqtt = ["service", "dep:rumqttc"]
 
 [dependencies]
 rustclamp-core = { version = "0.1.0", path = "../core" }
@@ -24,6 +26,7 @@ rustclamp-runtime = { version = "0.1.0", path = "../runtime", optional = true }
 tokio = { version = "1.53.1", optional = true, default-features = false, features = ["rt", "time", "sync", "macros"] }
 serde_json = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
+rumqttc = { version = "0.25.1", default-features = false, optional = true }
 
 [lints.rust]
 unsafe_code = "forbid"
