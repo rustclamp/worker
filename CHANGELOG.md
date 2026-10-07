@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add feature `mqtt` (implies `service`): `mqtt::MqttTransport`, a `Transport`
+  over one `rumqttc` QoS 1 subscription with manual acks and a persistent
+  session (`Done` acks, `DeadLetter` republishes to a dead-letter topic then
+  acks, `Release` leaves the message for redelivery on reconnect), and
+  `mqtt::publish` for producers. No TLS (ADR 0028, #12).
 - Add feature `sqlite` (implies `service`): `sqlite::SqliteQueue`, a durable
   `BlockingTransport` over one `rusqlite` connection (claim what is due on an
   injected `Clock`, dedupe key, attempts, `recover`), and `sqlite::enqueue`, a

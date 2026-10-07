@@ -54,6 +54,7 @@ let registry = HandlerTarget.build(&[(
 | --- | --- |
 | `service` | `service::WorkerService`: runs a registry over a `Transport` (`claim` / `settle` / `recover`) with backpressure, bounded concurrency, retries, dead-lettering, optional handler timeout, drain on shutdown, `ServiceEvent` observer and live `ServiceStats`. `BlockingTransport` + `Blocking` run blocking transports on Tokio's blocking pool. |
 | `sqlite` | (implies `service`) `sqlite::SqliteQueue`, a durable transport over one `rusqlite` connection, and `sqlite::enqueue`, a transactional outbox that commits or rolls back with the caller's transaction. One consumer per database. |
+| `mqtt` | (implies `service`) `mqtt::MqttTransport`, a QoS 1 transport over `rumqttc` (manual acks, persistent session; dead letters republish to a topic, then ack), and `mqtt::publish`. No TLS. |
 
 Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
