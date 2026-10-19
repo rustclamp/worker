@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Ready for crates.io: `publish = false` is gone and the manifest carries
+  homepage, documentation, keywords and categories. Nothing is uploaded until
+  rustclamp's `tools/publish.py --execute` runs.
 - `mqtt::MqttTransport` reports a broker outage: a stderr warning on the
   first connection error, again every minute while it lasts, and once on
   reconnect; `MqttTransport::outage()` returns how long it has lasted, for
