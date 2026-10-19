@@ -10,11 +10,11 @@ the transport-neutral envelope; broker ACK, retry and dead-letter stay in the tr
 
 ## Install
 
-Not yet published to crates.io; depend on it from git (Rust 1.96.1+, edition 2024):
+Rust 1.96.1+, edition 2024:
 
 ```toml
 [dependencies]
-rustclamp-worker = { git = "https://github.com/rustclamp/worker", features = ["service", "sqlite"] }
+rustclamp-worker = { version = "1", features = ["service", "sqlite"] }
 ```
 
 ## Example

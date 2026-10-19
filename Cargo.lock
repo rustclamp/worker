@@ -297,14 +297,14 @@ dependencies = [
 
 [[package]]
 name = "rustclamp-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "getrandom",
 ]
 
 [[package]]
 name = "rustclamp-messaging"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "rustclamp-core",
  "serde",
@@ -313,14 +313,14 @@ dependencies = [
 
 [[package]]
 name = "rustclamp-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "rustclamp-core",
 ]
 
 [[package]]
 name = "rustclamp-worker"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "rumqttc",
  "rusqlite",
