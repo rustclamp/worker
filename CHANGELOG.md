@@ -7,6 +7,10 @@
 - Ready for crates.io: `publish = false` is gone and the manifest carries
   homepage, documentation, keywords and categories. Nothing is uploaded until
   rustclamp's `tools/publish.py --execute` runs.
+- `WorkerService` keeps claiming while a backlog lasts: when a claim comes back
+  full, it claims again as the runners run low instead of waiting for the next
+  `poll` tick. 100k instant jobs (concurrency 8, capacity 64, poll 5 ms) take
+  0.28 s instead of 7.0 s; the claim limit is unchanged (#5).
 - `mqtt::MqttTransport` reports a broker outage: a stderr warning on the
   first connection error, again every minute while it lasts, and once on
   reconnect; `MqttTransport::outage()` returns how long it has lasted, for

@@ -293,6 +293,8 @@ struct State<R> {
     jobs: HashMap<u64, Job<R>>,
     backing_off: Vec<u64>,
     stopping: bool,
+    /// The last claim got everything it asked for, so more is probably waiting.
+    backlog: bool,
     report: ServiceReport,
     root: CancellationToken,
     tx: mpsc::UnboundedSender<Signal>,
@@ -337,6 +339,7 @@ impl<T: Transport> WorkerService<T> {
             jobs: HashMap::new(),
             backing_off: Vec::new(),
             stopping: false,
+            backlog: false,
             report: ServiceReport {
                 returned: 0,
                 cancelled: 0,
@@ -354,6 +357,11 @@ impl<T: Transport> WorkerService<T> {
                 () = &mut shutdown => break,
                 _ = poll.tick() => self.intake(&mut state).await?,
                 Some(signal) = rx.recv() => self.receive(&mut state, signal).await?,
+            }
+            // With a backlog, claim again as the runners run low instead of
+            // idling until the next tick; an empty transport waits for the tick.
+            if state.backlog && state.queue.len() < self.config.concurrency {
+                self.intake(&mut state).await?;
             }
             self.fill(&mut state);
         }
@@ -386,7 +394,9 @@ impl<T: Transport> WorkerService<T> {
         if room == 0 {
             return Ok(());
         }
-        for claim in self.transport.claim(room).await? {
+        let claims = self.transport.claim(room).await?;
+        state.backlog = claims.len() == room;
+        for claim in claims {
             match claim {
                 Claim::Malformed { receipt, id, error } => {
                     self.dead_letter(receipt, &id, DeadReason::Malformed, 0, Some(error), None)
