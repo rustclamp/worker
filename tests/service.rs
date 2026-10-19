@@ -290,6 +290,28 @@ fn concurrency_and_backpressure_hold() {
 }
 
 #[test]
+fn a_backlog_is_claimed_without_waiting_for_the_poll() {
+    let items = (0..50)
+        .map(|n| {
+            message(
+                &format!("f{n}"),
+                "flaky",
+                json!({"fail_times": 0, "permanent": false}),
+            )
+        })
+        .collect();
+    // Only the first tick falls inside the run: everything after it is claimed
+    // because each claim came back full.
+    let config = ServiceConfig {
+        poll: Duration::from_secs(60),
+        ..config()
+    };
+    let run = run(items, config, Duration::from_millis(300));
+    assert_eq!(run.settled.len(), 50);
+    assert_eq!(run.peak_unsettled, 3, "the claim limit still holds");
+}
+
+#[test]
 fn drain_timeout_cancels_running_and_releases_everything_else() {
     let items = (0..6)
         .map(|n| message(&format!("s{n}"), "sleep", json!({"ms": 10_000})))
