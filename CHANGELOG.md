@@ -22,7 +22,7 @@
   ignored. `postgres::enqueue` inserts a job on the caller's connection or open
   transaction (the outbox), with the same dedupe key rule as SQLite.
   `postgres::migration(version)` creates `worker_jobs` from the app's own
-  `Migrations` plan (ADR 0036, #19).
+  `Migrations` plan (ADR 0038, #19).
 
 ## 1.0.0 - 2026-10-19
 
