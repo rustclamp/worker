@@ -12,6 +12,18 @@
   `delivery.message.payload.clone()`). 100k instant jobs over an in-memory
   transport use 0.49 s of CPU instead of 1.08 s (#5).
 
+### Added
+
+- Feature `postgres` (implies `service`, adds `rustclamp-postgres`):
+  `postgres::PgQueue`, a `Transport` over a SQLx `PgPool` that several
+  consumers can share. `claim` takes what is due on an injected `Clock` with
+  `FOR UPDATE SKIP LOCKED` and holds each row for a visibility timeout; a row
+  whose lease ran out is claimed again, and a settle from the old owner is
+  ignored. `postgres::enqueue` inserts a job on the caller's connection or open
+  transaction (the outbox), with the same dedupe key rule as SQLite.
+  `postgres::migration(version)` creates `worker_jobs` from the app's own
+  `Migrations` plan (ADR 0036, #19).
+
 ## 1.0.0 - 2026-10-19
 
 ### Changed

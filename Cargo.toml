@@ -20,6 +20,8 @@ service = ["dep:tokio", "dep:rustclamp-runtime"]
 sqlite = ["service", "dep:rusqlite"]
 # MqttTransport: a QoS 1 Transport and publish helper over rumqttc, no TLS (ADR 0028).
 mqtt = ["service", "dep:rumqttc"]
+# PgQueue: a multi-consumer Transport and transactional outbox over rustclamp-postgres's SQLx pool (ADR 0036).
+postgres = ["service", "dep:rustclamp-postgres"]
 
 [dependencies]
 rustclamp-core = { version = "1.0.0", path = "../core" }
@@ -30,6 +32,7 @@ tokio = { version = "1.53.1", optional = true, default-features = false, feature
 serde_json = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 rumqttc = { version = "0.25.1", default-features = false, optional = true }
+rustclamp-postgres = { version = "1.0.0", path = "../postgres", optional = true }
 
 [lints.rust]
 unsafe_code = "forbid"

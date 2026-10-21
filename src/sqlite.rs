@@ -9,13 +9,13 @@
 
 use std::io;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use rusqlite::{Connection, params};
 use rustclamp_core::Clock;
 use rustclamp_messaging::MessageEnvelope;
 
-use crate::service::{BlockingTransport, Claim, Settlement};
+use crate::service::{BlockingTransport, Claim, Settlement, unix_ms};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS worker_jobs (
@@ -163,11 +163,4 @@ impl BlockingTransport for SqliteQueue {
             .map_err(io::Error::other)?;
         Ok(())
     }
-}
-
-fn unix_ms(time: SystemTime) -> i64 {
-    // Before 1970 clamps to 0; past i64 milliseconds is not a real clock.
-    time.duration_since(UNIX_EPOCH).map_or(0, |elapsed| {
-        i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-    })
 }

@@ -21,6 +21,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 #[cfg(feature = "service")]
 pub mod service;
 #[cfg(feature = "sqlite")]
