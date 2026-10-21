@@ -2,7 +2,7 @@
 
 use std::future::Future;
 use std::pin::pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -83,7 +83,7 @@ fn registry() -> HandlerRegistry {
             (
                 OWNER,
                 HandlerDeclaration::new("raw", 1, |delivery: Delivery| async move {
-                    Ok(delivery.message.payload)
+                    Ok(delivery.message.payload.clone())
                 }),
             ),
         ])
@@ -92,7 +92,7 @@ fn registry() -> HandlerRegistry {
 
 fn delivery(name: &str, payload: Value, attempt: u32) -> Delivery {
     Delivery {
-        message: MessageEnvelope {
+        message: Arc::new(MessageEnvelope {
             id: "m1".into(),
             name: name.into(),
             schema_version: 1,
@@ -100,7 +100,7 @@ fn delivery(name: &str, payload: Value, attempt: u32) -> Delivery {
             causation_id: None,
             deadline_unix_ms: None,
             payload,
-        },
+        }),
         attempt,
     }
 }
@@ -199,7 +199,7 @@ fn a_stepped_backoff_table_is_a_policy() {
 #[test]
 fn an_expired_message_is_dead_lettered_without_running() {
     let mut expired = delivery("echo", json!({"text": "late"}), 1);
-    expired.message.deadline_unix_ms = Some(999_000);
+    Arc::make_mut(&mut expired.message).deadline_unix_ms = Some(999_000);
     let outcome = deliver(expired, &RetryPolicy::linear(3, Duration::ZERO));
     assert!(matches!(
         outcome,

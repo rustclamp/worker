@@ -87,8 +87,9 @@ impl Error for HandlerFailure {
 /// One handler invocation: the message and its 1-based delivery attempt.
 #[derive(Clone, Debug)]
 pub struct Delivery {
-    /// The transport-neutral message being handled.
-    pub message: MessageEnvelope,
+    /// The transport-neutral message being handled, shared so an attempt does
+    /// not copy it. Take an owned copy with [`Arc::unwrap_or_clone`].
+    pub message: Arc<MessageEnvelope>,
     /// Which attempt this is, starting at 1. Transports own the counting.
     pub attempt: u32,
 }
@@ -225,7 +226,11 @@ impl HandlerRegistry {
     /// Decodes a serialized envelope and dispatches it as the given attempt.
     pub async fn dispatch_json(&self, bytes: &[u8], attempt: u32) -> Result<Value, DispatchError> {
         let message = serde_json::from_slice(bytes).map_err(DispatchError::Decode)?;
-        self.dispatch(Delivery { message, attempt }).await
+        self.dispatch(Delivery {
+            message: Arc::new(message),
+            attempt,
+        })
+        .await
     }
 
     /// Dispatches one delivery to its exact name and schema version.
