@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- Breaking: `Delivery::message` is now `Arc<MessageEnvelope>`, so
+  `WorkerService` no longer deep-clones the message for every attempt; it
+  wraps it once per claim and unwraps it again to settle. Build one with
+  `message: Arc::new(envelope)` (or `envelope.into()`); a handler that needs
+  an owned message or payload clones it (`Arc::unwrap_or_clone`,
+  `delivery.message.payload.clone()`). 100k instant jobs over an in-memory
+  transport use 0.49 s of CPU instead of 1.08 s (#5).
+
 ## 1.0.0 - 2026-10-19
 
 ### Changed

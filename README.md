@@ -43,7 +43,7 @@ let registry = HandlerTarget.build(&[(
 
 ## Main API
 
-- `HandlerDeclaration::new` (raw `Delivery`) and `::typed` (decoded payload in, serialized result out); `Delivery { message, attempt }`.
+- `HandlerDeclaration::new` (raw `Delivery`) and `::typed` (decoded payload in, serialized result out); `Delivery { message, attempt }`, where `message` is an `Arc<MessageEnvelope>` shared across attempts.
 - `HandlerFailure::retryable` / `permanent` / `unknown_outcome`: lets policy authorize retries and keep timeouts whose side effects are unknown.
 - `HandlerRegistry`: `dispatch`, `dispatch_json`, `deliver`, `validate`, `contains`, `routes`.
 - `RetryPolicy` (`new`, `linear`) classifies a failure into an `Outcome` (retry with delay and error, or dead letter with a `DeadReason`).

@@ -201,15 +201,14 @@ fn the_service_runs_jobs_from_the_queue() {
     for id in ["a", "b"] {
         enqueue(&conn, &message(id), at(0), None).unwrap();
     }
-    let registry =
-        HandlerTarget
-            .build(&[(
-                ModuleId::new("test.module.echo"),
-                HandlerDeclaration::new("echo", 1, |delivery| async move {
-                    Ok(delivery.message.payload)
-                }),
-            )])
-            .unwrap();
+    let registry = HandlerTarget
+        .build(&[(
+            ModuleId::new("test.module.echo"),
+            HandlerDeclaration::new("echo", 1, |delivery| async move {
+                Ok(delivery.message.payload.clone())
+            }),
+        )])
+        .unwrap();
     let config = ServiceConfig {
         concurrency: 2,
         capacity: 2,

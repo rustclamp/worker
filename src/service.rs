@@ -277,7 +277,7 @@ pub struct WorkerService<T: Transport> {
 
 struct Job<R> {
     receipt: R,
-    message: MessageEnvelope,
+    message: Arc<MessageEnvelope>,
     attempt: u32,
 }
 
@@ -430,7 +430,7 @@ impl<T: Transport> WorkerService<T> {
                         slot,
                         Job {
                             receipt,
-                            message,
+                            message: Arc::new(message),
                             attempt: 1,
                         },
                     );
@@ -453,7 +453,7 @@ impl<T: Transport> WorkerService<T> {
             });
             self.stats.executing.fetch_add(1, Relaxed);
             let delivery = Delivery {
-                message: job.message.clone(),
+                message: Arc::clone(&job.message),
                 attempt: job.attempt,
             };
             let (registry, clock, policy) = (
@@ -539,7 +539,8 @@ impl<T: Transport> WorkerService<T> {
                         Settlement::Done {
                             result,
                             attempts,
-                            message: job.message,
+                            // The attempt has finished, so this is normally the last reference.
+                            message: Arc::unwrap_or_clone(job.message),
                         },
                     )
                     .await?;
@@ -558,7 +559,7 @@ impl<T: Transport> WorkerService<T> {
                     reason,
                     job.attempt,
                     error,
-                    Some(job.message),
+                    Some(Arc::unwrap_or_clone(job.message)),
                 )
                 .await?;
             }
