@@ -605,3 +605,13 @@ impl<T: Transport> WorkerService<T> {
         Ok(())
     }
 }
+
+/// Milliseconds since the Unix epoch, the `run_at` unit of the database transports.
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+pub(crate) fn unix_ms(time: std::time::SystemTime) -> i64 {
+    // Before 1970 clamps to 0; past i64 milliseconds is not a real clock.
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+        })
+}
